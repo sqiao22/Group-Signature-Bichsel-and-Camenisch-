@@ -2,6 +2,7 @@ extern crate amcl_wrapper;
 extern crate zmix;
 extern crate ursa;
 
+
 use amcl_wrapper::group_elem::GroupElement;
 use std::collections::{HashMap, HashSet};
 use zmix::signatures::prelude::*;
@@ -16,6 +17,10 @@ use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
 use amcl_wrapper::extension_field_gt::GT;
+
+
+use amcl_wrapper::ECCurve::big::BIG;
+
 // use ursa::cl::issuer::Issuer;
 // use ursa::cl::prover::Prover;
 // use ursa::cl::verifier::Verifier;
@@ -23,132 +28,165 @@ use amcl_wrapper::extension_field_gt::GT;
 // use std::time::{Duration, Instant};
 
 
-
-
-
-// fn print_type_of<T>(_: &T) {
-//     println!("{}", std::any::type_name::<T>())
-// }
-
-// pub fn GSetup (){
-//     let count_msgs = 10;
-//     let tesss =keygen(count_msgs, "test".as_bytes());
-//     print_type_of(&tesss);
-// }
-
-
-
-//real
 pub fn GSetup (count_msgs: usize, label: &[u8])->(Gpk, Gmsk){
+    println!("GSetup Start.........");
     let (gpk, gmsk) = For_GSetup(count_msgs, label);
     // print_type_of(&gpk);
+    println!("GSetup Successful!");
     (gpk, gmsk)
 }
 
-
-//fake
-// pub fn GSetup (count_msgs: usize, label: &[u8])->(PublicKey,SecretKey){
-//     let (gpk, gmsk) = keygen(count_msgs, label);
-//     // print_type_of(&gpk);
-//     (gpk, gmsk)
-// }
-
 pub fn PKIJoin (count_msgs: usize, label: &[u8])->(PublicKey,SecretKey){
+    println!("PKIJoin Start.........");
     let (upk_i, usk_i) = keygen(count_msgs, label);
     let msg = FieldElementVector::random(count_msgs);
     let sign_usk_i=Signature::new(msg.as_slice(), &usk_i, &upk_i).unwrap();
-    let check=sign_usk_i.verify(msg.as_slice(),&upk_i).unwrap();
-    println!("usk_i, upk_i pair checks out: {}",check);
+    // let check=sign_usk_i.verify(msg.as_slice(),&upk_i).unwrap();
+    // println!("usk_i, upk_i pair checks out: {}",check);
+    println!("PKIJoin Successful!");
     (upk_i, usk_i)
 }
 
-
-//need to convert τ into number so it can be signed
+//Need to convert τ into number so it can be signed
 pub fn hashing(s: DefaultHasher,message: amcl_wrapper::group_elem_g1::G1)->(u64){
     let mut hasher = s.clone();
     message.hash(&mut hasher);
     hasher.finish()
 }
-
-//fake
-// pub fn GJoin (gpk: PublicKey,gmsk: SecretKey, upk_i:PublicKey ,usk_i:SecretKey)->(){
-//real
-pub fn GJoin (gpk: Gpk,gmsk: Gmsk, upk_i:PublicKey ,usk_i:SecretKey)->(){
-    ////////////user generates a secret key
-    let ski= FieldElement::random();
-    ////////////user sends the pair τ, τ, 
-    let tow=&gpk.g * &ski;
-    //fake
-    // let mut tow_tilde = vec![];
-    // for item in gpk.Y_tilde {
-    //     // println!("{:?}", item);
-    //     tow_tilde.push(&item * &ski);
-    // }
-    //real
-    let tow_tilde= &gpk.Y_tilde * &ski;
-
-
-    //////////////sign using usk_i
-    // println!("{:?}", tow);
-
-    ////////////////////sign using usk_i by the user????????????????????????
-    // let mut s = DefaultHasher::new();
-
-    // let tow_hash=hashing(s.clone(),tow.clone());
+// Need this so tow can be a FieldElementVector
+pub fn sign_usk_i(s:DefaultHasher,tow:amcl_wrapper::group_elem_g1::G1,usk_i:SecretKey, upk_i:PublicKey)->(Signature){
+    let tow_hash=hashing(s.clone(),tow.clone());
     // println!("{:?}", tow_hash);
+    let mut msg=FieldElementVector::new(0);
+    // println!("{:?}", tow_hash % 20 );
+    for i in 0..20 {
+        if i==tow_hash % 20 {
+            msg.push(FieldElement::zero());
+        }
+        else{
+            msg.push(FieldElement::one());
+        }
+    }
+    // println!("{:?}", msg);
+    Signature::new(msg.as_slice(), &usk_i, &upk_i).unwrap()
+}
+// Check sign_usk_i signature
+pub fn verify_usk_i(signature_usk_i: Signature,s:DefaultHasher,tow:amcl_wrapper::group_elem_g1::G1, upk_i:PublicKey)->(bool){
+    
+    let tow_hash=hashing(s.clone(),tow.clone());
+    let mut msg=FieldElementVector::new(0);
+    // println!("{:?}", tow_hash % 20 );
+    for i in 0..20 {
+        if i==tow_hash % 20 {
+            msg.push(FieldElement::zero());
+        }
+        else{
+            msg.push(FieldElement::one());
+        }
+    }
 
-    // let message = FieldElement::new();
-    // // message.zero(tow_hash);
-    // let messages = FieldElementVector::new();
-    // println!("{:?}", messages);
-    // messages.push(message);
+    let check=signature_usk_i.verify(msg.as_slice(),&upk_i).unwrap();
+    check
+}
 
-    // let sign=Signature::new(messages.as_slice(), &usk_i, &upk_i).unwrap();
-    // let tow_hash_2=hashing(s.clone(),tow.clone());
-    // println!("{:?}", tow_hash_2);
-    /////////////////////////////////////////////////////
-    // let res = ate_2_pairing(&tow, &gpk.Y_tilde, &gpk.g, &tow_tilde);
-    // let res = GT::ate_pairing(&gpk.g, &gpk.Y_tilde, &gpk.g, &gpk.Y_tilde);
+pub fn GJoin (i: usize, gpk: Gpk,gmsk: Gmsk, upk_i:PublicKey ,usk_i:SecretKey)->(){
+    println!("GJoin Start.........");
+    //USER generates a secret key,τ, τ_tidle, η and send τ, τ_tidle and η
+    println!("USER create ski, τ, τ_tidle and η and send τ, τ_tidle and η");
+    let ski= FieldElement::random();
+    let tow=&gpk.g * &ski;
+    let tow_tilde= &gpk.Y_tilde * &ski;
+    let mut s = DefaultHasher::new();
+    let n =sign_usk_i(s.clone(), tow.clone(), usk_i.clone(), upk_i.clone());
+    // let m =sign_usk_i(s.clone(), tow.clone(), usk_i.clone(), upk_i.clone());
+    // let check1=verify_usk_i(n.clone(),s.clone(), tow.clone(),upk_i.clone());
+    // let check2=verify_usk_i(m.clone(),s.clone(), tow.clone(),upk_i.clone());
+    // println!("{:?}",check1);
+    // println!("{:?}",check2);
+    
+
+    println!("GROUP MANAGER tests e(τ, Y_tilde) =e(g, τ_tilde)");
+    //GROUP MANAGER tests e(τ, Y_tilde) =e(g, τ_tilde)
     let res = GT::ate_pairing(&tow, &gpk.Y_tilde);
     let res2 = GT::ate_pairing(&gpk.g, &tow_tilde);
-    println!("{:?}", res==res2);
+    // println!("{:?}", res==res2);
 
-    //proof of knowledge
-    test_PoK_multiple_sigs();
+
+    println!("USER Start Proof of knowledge of ski");
+    //User start proof of knowledge for ski
+    // let pk=(&tow, &gpk.Y_tilde);
+    // test_PoK_multiple_sigs(pk,ski);
+    test_sigmaProtocol(gpk.g.clone(),ski.clone(),tow.clone());
+    
+
+    println!("Group Manager Generates u, σ");
+    //Group MANAGER u, σ←(σ1,σ2)←(gu,(gx·(τ)y)u) 
+    let u= FieldElement::random();
+    let sigma1=&gpk.g * &u;
+    let sigma2=&gpk.g * &gmsk.x + &tow * &gmsk.y * &u;
+    let sigma=(&sigma1,&sigma2);
+
+
+    println!("Group Manager Stores i,τ,η,τ_tilde and hash");
+    //Group Manager Store (i,τ,η,τ_tilde) need to add s for hasher
+    let secret_register=(i,tow,n,tow_tilde,s);
+
+    println!("USER Stores ski,σ,e(σ1,Y_tilde)");
+    //User Store (ski,σ,e(σ1,Y_tilde))
+    let gsk_i=(ski,sigma,GT::ate_pairing(&sigma1,&gpk.Y_tilde));
+
+    println!("GJoin Successful!");
 
 }
 
+//using sigma protocol, since PoKOfSignature requires vk and sk pair, when ski is the only thing given
+pub fn test_sigmaProtocol(g:amcl_wrapper::group_elem_g1::G1,y:FieldElement,Y:amcl_wrapper::group_elem_g1::G1)->(){
+    //Proofer/USER calculate r and A
+    let r = FieldElement::random();
+    let A=&g*&r;
+    //Proofer send A to Verifer
+    //Verifer/GROUP MANAGER Calculate cha
+    let cha = FieldElement::random();
+    //Verifer send cha to Proofer
+    //Proofer calculate rsp
+    let rsp=&r-&y*&cha;
+    //Proofer send rsp to Verifer
+    // Verifer check if A=g^rsp*Y^cha
+    let Check=&g*&rsp+&Y*&cha;
+    println!("Proof of USER knowing ski: {:?}", A==Check);
 
-fn test_PoK_multiple_sigs(gpk: gmsk:) {
-        // Prove knowledge of multiple signatures together (using the same challenge)
-        let count_msgs = 5;
-        let (vk, sk) = keygen(count_msgs, "test".as_bytes());
+}
 
-        let msgs_1 = FieldElementVector::random(count_msgs);
-        let sig_1 = Signature::new(msgs_1.as_slice(), &sk, &vk).unwrap();
-        assert!(sig_1.verify(msgs_1.as_slice(), &vk).unwrap());
+// fn test_PoK_multiple_sigs(gpk: Gpk, gmsk: Gmsk) {
+//     // Prove knowledge of multiple signatures together (using the same challenge)
+//     let count_msgs = 5;
+//     let (vk, sk) = keygen(count_msgs, "test".as_bytes());
 
-        let msgs_2 = FieldElementVector::random(count_msgs);
-        let sig_2 = Signature::new(msgs_2.as_slice(), &sk, &vk).unwrap();
-        assert!(sig_2.verify(msgs_2.as_slice(), &vk).unwrap());
+//     let msgs_1 = FieldElementVector::random(count_msgs);
+//     let sig_1 = Signature::new(msgs_1.as_slice(), &sk, &vk).unwrap();
+//     assert!(sig_1.verify(msgs_1.as_slice(), &vk).unwrap());
 
-        let pok_1 =
-            PoKOfSignature::init(&sig_1, &vk, msgs_1.as_slice(), None, HashSet::new()).unwrap();
-        let pok_2 =
-            PoKOfSignature::init(&sig_2, &vk, msgs_2.as_slice(), None, HashSet::new()).unwrap();
+//     let msgs_2 = FieldElementVector::random(count_msgs);
+//     let sig_2 = Signature::new(msgs_2.as_slice(), &sk, &vk).unwrap();
+//     assert!(sig_2.verify(msgs_2.as_slice(), &vk).unwrap());
 
-        let mut chal_bytes = vec![];
-        chal_bytes.append(&mut pok_1.to_bytes());
-        chal_bytes.append(&mut pok_2.to_bytes());
+//     let pok_1 =
+//         PoKOfSignature::init(&sig_1, &vk, msgs_1.as_slice(), None, HashSet::new()).unwrap();
+//     let pok_2 =
+//         PoKOfSignature::init(&sig_2, &vk, msgs_2.as_slice(), None, HashSet::new()).unwrap();
 
-        let chal = FieldElement::from_msg_hash(&chal_bytes);
+//     let mut chal_bytes = vec![];
+//     chal_bytes.append(&mut pok_1.to_bytes());
+//     chal_bytes.append(&mut pok_2.to_bytes());
 
-        let proof_1 = pok_1.gen_proof(&chal).unwrap();
-        let proof_2 = pok_2.gen_proof(&chal).unwrap();
+//     let chal = FieldElement::from_msg_hash(&chal_bytes);
 
-        assert!(proof_1.verify(&vk, HashMap::new(), &chal).unwrap());
-        assert!(proof_2.verify(&vk, HashMap::new(), &chal).unwrap());
-    }
+//     let proof_1 = pok_1.gen_proof(&chal).unwrap();
+//     let proof_2 = pok_2.gen_proof(&chal).unwrap();
+
+//     assert!(proof_1.verify(&vk, HashMap::new(), &chal).unwrap());
+//     assert!(proof_2.verify(&vk, HashMap::new(), &chal).unwrap());
+// }
 
 
 
@@ -163,7 +201,7 @@ fn test_scenario_1() {
     let label="test".as_bytes();
     let (gpk, gmsk) = GSetup(count_msgs,label);
 
-    let (upk_i, usk_i)=PKIJoin(1,label);
+    let (upk_i, usk_i)=PKIJoin(20,label);
 
 
     // println!("{}",gpk.X_tilde);
@@ -172,8 +210,8 @@ fn test_scenario_1() {
     // println!("{}",sk.X);
     // println!("{:?}",gpk.g);
     // println!("{:?}",gpk.g_tilde);
-
-    GJoin (gpk.clone(),gmsk.clone(), upk_i,usk_i);
+    let user_id=1;
+    GJoin (user_id,gpk.clone(),gmsk.clone(), upk_i,usk_i);
 
 
 
