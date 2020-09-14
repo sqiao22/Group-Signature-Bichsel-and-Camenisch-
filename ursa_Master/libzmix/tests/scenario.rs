@@ -4,7 +4,6 @@ extern crate ursa;
 
 
 use amcl_wrapper::group_elem::GroupElement;
-use std::collections::{HashMap, HashSet};
 use zmix::signatures::prelude::*;
 use zmix::signatures::ps::prelude::*;
 
@@ -79,7 +78,7 @@ pub fn verify_usk_i(signature_usk_i: Signature,s:DefaultHasher,tow:amcl_wrapper:
     check
 }
 
-//using sigma protocol, since PoKOfSignature requires vk and sk pair, when ski is the only thing given
+//using interactive sigma protocol, when ski is the only thing given
 pub fn test_sigmaProtocol(g:amcl_wrapper::group_elem_g1::G1,y:FieldElement,Y:amcl_wrapper::group_elem_g1::G1)->(){
     //Proofer/USER calculate r and A
     let r = FieldElement::random();
@@ -105,8 +104,8 @@ pub fn GJoin (i: usize, gpk: Gpk,gmsk: Gmsk, upk_i:PublicKey ,usk_i:SecretKey)->
     let ski= FieldElement::random();
     let tow=&gpk.g * &ski;
     let tow_tilde= &gpk.Y_tilde * &ski;
-    let mut s = DefaultHasher::new();
-    let n =sign_usk_i(s.clone(), tow.clone(), usk_i.clone(), upk_i.clone());
+    let mut hash_saved = DefaultHasher::new();
+    let n =sign_usk_i(hash_saved.clone(), tow.clone(), usk_i.clone(), upk_i.clone());
     // let m =sign_usk_i(s.clone(), tow.clone(), usk_i.clone(), upk_i.clone());
     // let check1=verify_usk_i(n.clone(),s.clone(), tow.clone(),upk_i.clone());
     // let check2=verify_usk_i(m.clone(),s.clone(), tow.clone(),upk_i.clone());
@@ -139,7 +138,7 @@ pub fn GJoin (i: usize, gpk: Gpk,gmsk: Gmsk, upk_i:PublicKey ,usk_i:SecretKey)->
 
     println!("Group Manager Stores i,τ,η,τ_tilde and hash");
     //Group Manager Store (i,τ,η,τ_tilde) need to add s for hasher
-    let secret_register=(i,tow,n,tow_tilde,s);
+    let secret_register=(i,tow,n,tow_tilde,hash_saved);
 
     println!("USER Stores ski,σ,e(σ1,Y_tilde)");
     //User Store (ski,σ,e(σ1,Y_tilde))
@@ -151,7 +150,7 @@ pub fn GJoin (i: usize, gpk: Gpk,gmsk: Gmsk, upk_i:PublicKey ,usk_i:SecretKey)->
 
 }
 
-//Hash tuple of mess G1,GT, str
+//Hash tuple of messy G1,GT,str
 pub fn H1(s:DefaultHasher,message:(amcl_wrapper::group_elem_g1::G1,
     amcl_wrapper::group_elem_g1::G1,
     amcl_wrapper::extension_field_gt::GT,&str))->u64{
@@ -217,7 +216,7 @@ pub fn GVerify(gpk: Gpk,mu:(amcl_wrapper::group_elem_g1::G1,
     amcl_wrapper::group_elem_g1::G1, 
     amcl_wrapper::field_elem::FieldElement, 
     amcl_wrapper::field_elem::FieldElement), 
-    hash_for_tuple:DefaultHasher,msg:&'static  str)->(){
+    hash_for_tuple:DefaultHasher,msg:&'static  str)->bool{
 
     println!("GVerify Start.........");
     let sigma1_dash=mu.0;
@@ -239,6 +238,7 @@ pub fn GVerify(gpk: Gpk,mu:(amcl_wrapper::group_elem_g1::G1,
     println!("Does this Verify: {:?}", c1==c2);
 
     println!("GVerify Successful!");
+    c1==c2
 
 
     // a=e(σ1^-1, X_tilde)·e(σ2, g_tilde))^−c
@@ -285,22 +285,93 @@ pub fn GVerify(gpk: Gpk,mu:(amcl_wrapper::group_elem_g1::G1,
 
 }
 
+//Used as last resort to find identity, Note need to know gpk since need g.tilde and X_tilde
+pub fn GOpen(gpk: Gpk,gmsk_array: Vec<(usize,amcl_wrapper::group_elem_g1::G1,Signature,amcl_wrapper::group_elem_g2::G2,DefaultHasher)>, mu:(amcl_wrapper::group_elem_g1::G1, 
+    amcl_wrapper::group_elem_g1::G1, 
+    amcl_wrapper::field_elem::FieldElement, 
+    amcl_wrapper::field_elem::FieldElement), 
+    hash_for_tuple:DefaultHasher,msg:&'static  str)->(){
+
+    let sigma1_dash=mu.0;
+    let sigma2_dash=mu.1;
+    let c=mu.2;
+    let s=mu.3;
+    // let mut true_tow_tilde: amcl_wrapper::group_elem_g2::G2;
+    // let mut true_identity: (usize,amcl_wrapper::group_elem_g1::G1,Signature);
+
+    //loop to find the user
+    for gmsk in gmsk_array{
+        let idenity_id= gmsk.0;
+        let tow = gmsk.1;
+        let n = gmsk.2;
+        let tow_tilde = gmsk.3;
+        let hash_saved = gmsk.4;
+
+        //check e(σ2, g_tilde)·e(σ1, X_tilde)^−1=e(σ1, τ_tilde)
+        if GT::ate_2_pairing(&sigma2_dash,&gpk.g_tilde,&(-&sigma1_dash),&gpk.X_tilde)==GT::ate_pairing(&sigma1_dash,&tow_tilde){
+            println!("The identity is User {:?}", idenity_id);
+            let true_tow_tilde=tow_tilde;
+            let true_identity=(idenity_id,tow,n);
+
+            //Proof of knowledge of τ_tilde
+            //GM informs all to chanellege it's knowledge of τ_tilde
+            //Verifer generates r and A
+            let r = FieldElement::random();
+            let cha = &gpk.g*&r;
+            //Verifer sends cha to Proofer/GM, GM calculates rsp=e(A,τ_tilde)
+            let rsp = GT::ate_pairing(&cha,&true_tow_tilde);
+            //GM sends rsp to Verifer
+            //Verifer calculates e(τ,Y_tilde)^r and check if rsp=e(τ,Y_tilde)^r
+            println!("Proof of knowledge of τ_tilde {:?}", rsp==GT::ate_pairing(&true_identity.1,&gpk.Y_tilde).pow(&r));
+
+
+        }
+    }
+
+}
+
 #[test]
 fn test_scenario_1() {
-    let count_msgs = 10;
+ //Vec<(usize,amcl_wrapper::group_elem_g1::G1,Signature,amcl_wrapper::group_elem_g2::G2,DefaultHasher)>
+    let mut gmsk_array=Vec::new();
+    //Group Created
+    //number of messages used to generate pk and sk
+    let count_msgs = 1;
     let label="test".as_bytes();
     let (gpk, gmsk) = GSetup(count_msgs,label);
 
-    let (upk_i, usk_i)=PKIJoin(1,label);
-
+    // User A Created
+    let (upk_1, usk_1)=PKIJoin(count_msgs,label);
     let user_id=1;
+    let (secret_register_1,gsk_1) = GJoin (user_id,gpk.clone(),gmsk.clone(), upk_1,usk_1);
+    //Store A idenity in secret GM array
+    gmsk_array.push(secret_register_1.clone());
 
-    let (secret_register,gsk_i) = GJoin (user_id,gpk.clone(),gmsk.clone(), upk_i,usk_i);
 
-    //note gpk is used for debuging remove gpk parameter when in production
-    let (mu,hash_for_tuple, msg)= GSign(gsk_i.clone(),"I require 10 boeing 747");
+    // User B Created
+    let (upk_2, usk_2)=PKIJoin(count_msgs,label);
+    let user_id=2;
+    let (secret_register_2,gsk_2) = GJoin (user_id,gpk.clone(),gmsk.clone(), upk_2,usk_2);
+    //Store B idenity in secret GM array
+    gmsk_array.push(secret_register_2.clone());
 
-    let verified_result=GVerify(gpk,mu,hash_for_tuple, msg);
+
+    //User A signs for message
+    let (mu_1,hash_for_tuple_1, msg_1)= GSign(gsk_1.clone(),"I require 10 boeing 747");
+    let verified_signature_1=GVerify(gpk.clone(),mu_1.clone(),hash_for_tuple_1.clone(), msg_1.clone());
+
+    //User B signs for message
+    let (mu_2,hash_for_tuple_2, msg_2)= GSign(gsk_2.clone(),"I require 5 boeing 747");
+    let verified_signature_2=GVerify(gpk.clone(),mu_2.clone(),hash_for_tuple_2.clone(), msg_2.clone());
+
+
+    // who signed mu_1,hash_for_tuple_1,msg_1?
+    println!("Who signed this? {:?}", msg_1.clone());
+    GOpen(gpk.clone(),gmsk_array.clone(),mu_1.clone(),hash_for_tuple_1.clone(),msg_1.clone());
+    // who signed mu_2,hash_for_tuple_2,msg_2?
+    println!("Who signed this? {:?}", msg_2.clone());
+    GOpen(gpk.clone(),gmsk_array.clone(),mu_2.clone(),hash_for_tuple_2.clone(),msg_2.clone());
+
 
 
 
