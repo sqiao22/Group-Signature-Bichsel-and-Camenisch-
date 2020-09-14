@@ -1,3 +1,19 @@
+# GROUP SIGNATURE SETUP
+
+Setup RUST
+>$ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+>$ 1
+>$ source $HOME/.cargo/env
+>$ rustup update
+
+Run Group Signature
+>$ cd ursa_master/libzmix/
+>$ cargo test --release --no-default-features --features PS_Signature_G1 -- --nocapture
+
+
+*Note: /ursa_Master/libzmix/tests/scenario.rs is where the code.
+
+
 # HYPERLEDGER URSA
 
 [![Build Status](https://travis-ci.org/hyperledger/ursa.svg?branch=travis-ci)](https://travis-ci.org/hyperledger/ursa)
